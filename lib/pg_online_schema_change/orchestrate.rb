@@ -36,7 +36,7 @@ module PgOnlineSchemaChange
         Store.set(:trigger_time_column, "trigger_time_#{pgosc_identifier}")
         Store.set(:audit_table_pk, "at_#{pgosc_identifier}_id")
         Store.set(:audit_table_pk_sequence, "#{audit_table}_#{audit_table_pk}_seq")
-        Store.set(:shadow_table, "pgosc_st_#{client.table.downcase}_#{pgosc_identifier}")
+        Store.set(:shadow_table, "#{client.table.downcase}_#{pgosc_identifier}")
 
         Store.set(
           :referential_foreign_key_statements,
@@ -276,6 +276,27 @@ module PgOnlineSchemaChange
           #{trigger_statements}
           #{storage_params_reset}
           DROP TRIGGER IF EXISTS primary_to_audit_table_trigger ON #{client.table_name};
+
+          DO 
+          $$
+          DECLARE
+            loop_column text;
+            sequence_name text;
+          BEGIN
+            FOR loop_column IN (
+              SELECT column_name
+              FROM information_schema.columns
+              WHERE table_name = '#{old_primary_table}'
+              AND table_schema = '#{client.schema}'
+            )
+            LOOP
+              sequence_name := pg_get_serial_sequence('#{client.schema}.#{old_primary_table}', loop_column);
+              IF sequence_name IS NOT NULL THEN
+                EXECUTE 'ALTER SEQUENCE ' || sequence_name || ' OWNED BY #{client.schema}.#{client.table_name}.' || loop_column;
+              END IF;
+            END LOOP;
+          END
+          $$;
         SQL
 
         Query.run(client.connection, sql, opened)
@@ -334,7 +355,8 @@ module PgOnlineSchemaChange
       private
 
       def pgosc_identifier
-        @pgosc_identifier ||= SecureRandom.hex(3)
+        # @pgosc_identifier ||= SecureRandom.hex(3)
+        @pgosc_identifier ||= "v2"
       end
 
       def storage_params_reset
