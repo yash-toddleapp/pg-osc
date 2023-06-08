@@ -59,7 +59,7 @@ module PgOnlineSchemaChange
 
       def table_name(query, table)
         table_name = "\"#{table}\""
-        if table =~ /[A-Z]/ && query.include?(table_name) && table[0] != '"'
+        if query.include?(table_name) && table[0] != '"'
           table_name
         else
           table
