@@ -42,10 +42,10 @@ module PgOnlineSchemaChange
     method_option :password,
                   aliases: "-w",
                   type: :string,
-                  required: false,
+                  required: true,
                   default: "",
                   desc:
-                    "DEPRECATED: Password for the Database. Please pass PGPASSWORD environment variable instead."
+                    "Password for the Database"
     method_option :verbose,
                   aliases: "-v",
                   type: :boolean,
@@ -94,13 +94,13 @@ module PgOnlineSchemaChange
       client_options = Struct.new(*options.keys.map(&:to_sym)).new(*options.values)
       PgOnlineSchemaChange.logger(verbose: client_options.verbose)
 
-      if client_options.password
-        PgOnlineSchemaChange.logger.warn(
-          "DEPRECATED: -w is deprecated. Please pass PGPASSWORD environment variable instead.",
-        )
-      end
+      # if client_options.password
+      #   PgOnlineSchemaChange.logger.warn(
+      #     "DEPRECATED: -w is deprecated. Please pass PGPASSWORD environment variable instead.",
+      #   )
+      # end
 
-      client_options.password = ENV["PGPASSWORD"] || client_options.password
+      client_options.password = client_options.password || ENV["PGPASSWORD"]
 
       PgOnlineSchemaChange::Orchestrate.run!(client_options)
     end
