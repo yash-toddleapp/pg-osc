@@ -4,7 +4,7 @@ FROM ruby:3.0
 WORKDIR /app
 
 # Copy the gem file to the container
-COPY pg_online_schema_change-0.9.7.gem pg_online_schema_change.gem
+COPY pg_online_schema_change-0.9.8.gem pg_online_schema_change.gem
 
 # Install the gem
 RUN gem install pg_online_schema_change.gem --no-document && \
