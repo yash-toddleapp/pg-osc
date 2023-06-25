@@ -232,8 +232,19 @@ module PgOnlineSchemaChange
           return Query.run(client.connection, query, true)
         end
 
-        sql = Query.copy_data_statement(client, shadow_table, true)
-        Query.run(client.connection, sql, true)
+        total_rows = Query.total_rows(client, client.table_name)
+
+        logger.info("Total rows to copy: #{total_rows}")
+        offset = 0
+        batch_size = 500000
+
+        while offset <= total_rows.to_i
+          logger.info("Copying rows from #{offset} to #{offset + batch_size}")
+          sql = Query.copy_data_statement_v3(client, shadow_table, true, batch_size, offset)
+          Query.run(client.connection, sql, true)
+          offset += batch_size
+        end
+        logger.info("Finished copying rows")
       ensure
         Query.run(client.connection, "COMMIT;") # commit the serializable transaction
       end

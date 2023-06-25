@@ -396,6 +396,105 @@ module PgOnlineSchemaChange
         SQL
       end
 
+      def copy_data_statement_v2(client, shadow_table, reuse_trasaction = false, batch_size)
+        select_columns =
+          table_columns(client, client.table_name, reuse_trasaction).map do |entry|
+            entry["column_name_regular"]
+          end
+
+        select_columns -= dropped_columns_list if dropped_columns_list.any?
+
+        insert_into_columns = select_columns.dup
+
+        if renamed_columns_list.any?
+          renamed_columns_list.each do |obj|
+            insert_into_columns.each_with_index do |insert_into_column, index|
+              insert_into_columns[index] = obj[:new_name] if insert_into_column == obj[:old_name]
+            end
+          end
+        end
+
+        insert_into_columns.map! do |insert_into_column|
+          client.connection.quote_ident(insert_into_column)
+        end
+
+        select_columns.map! { |select_column| client.connection.quote_ident(select_column) }
+
+        <<~SQL
+        DO $$
+        DECLARE
+            counter INTEGER := 0;
+            rows INTEGER := 0;
+            var_offset INTEGER := 0;
+            batch_size INTEGER := #{batch_size}::INTEGER;
+            iteration INTEGER := 0;
+        BEGIN
+            rows := (SELECT count(*) FROM storeroom.test_int_bigint);
+            iteration := rows / batch_size;
+            RAISE NOTICE 'Total rows: %', rows;
+            RAISE NOTICE 'Batch size: %', batch_size;
+            RAISE NOTICE 'Iterations: %', iteration + 1;
+            WHILE counter <= iteration LOOP
+            INSERT INTO #{shadow_table}(#{insert_into_columns.join(", ")}) SELECT #{select_columns.join(", ")} FROM ONLY #{client.table_name} ORDER BY #{select_columns.join(", ")} LIMIT batch_size OFFSET var_offset;
+                RAISE NOTICE 'Iteration % completed of %', counter + 1, iteration + 1;
+                var_offset := var_offset + batch_size;
+                counter := counter + 1;
+            END LOOP;
+        END $$;
+        SQL
+        # <<~SQL
+        #   DO $$
+        #   DECLARE
+        #       counter INTEGER := 0;
+        #       rows INTEGER := 0;
+        #       var_offset INTEGER := 0;
+        #       batch_size INTEGER := #{batch_size};
+        #       iteration INTEGER := 0;
+        #   BEGIN
+        #       rows := (SELECT count(*) FROM #{client.table_name});
+        #       iteration := rows / batch_size;
+        #       RAISE NOTICE 'Total rows: %', rows;
+        #       RAISE NOTICE 'Batch size: %', batch_size;
+        #       RAISE NOTICE 'Iterations: %', iteration + 1;
+        #       WHILE var_offset < rows LOOP
+        #           PERFORM public.execute_query('INSERT INTO #{shadow_table}(#{insert_into_columns.join(", ")}) SELECT #{select_columns.join(", ")} FROM ONLY #{client.table_name} LIMIT ' || batch_size || ' OFFSET ' || var_offset || ';');
+        #           RAISE NOTICE 'Iteration % completed of %', counter + 1, iteration + 1;
+        #           var_offset := var_offset + batch_size;
+        #           counter := counter + 1;
+        #       END LOOP;
+        #   END $$;
+        # SQL
+      end
+
+      def copy_data_statement_v3(client, shadow_table, reuse_trasaction = false, limit, offset)
+        select_columns =
+          table_columns(client, client.table_name, reuse_trasaction).map do |entry|
+            entry["column_name_regular"]
+          end
+
+        select_columns -= dropped_columns_list if dropped_columns_list.any?
+
+        insert_into_columns = select_columns.dup
+
+        if renamed_columns_list.any?
+          renamed_columns_list.each do |obj|
+            insert_into_columns.each_with_index do |insert_into_column, index|
+              insert_into_columns[index] = obj[:new_name] if insert_into_column == obj[:old_name]
+            end
+          end
+        end
+
+        insert_into_columns.map! do |insert_into_column|
+          client.connection.quote_ident(insert_into_column)
+        end
+
+        select_columns.map! { |select_column| client.connection.quote_ident(select_column) }
+        columns = select_columns[0] == "id" ? "id" : select_columns.join(", ")
+        <<~SQL
+            INSERT INTO #{shadow_table}(#{insert_into_columns.join(", ")}) SELECT #{select_columns.join(", ")} FROM ONLY #{client.table_name} ORDER BY #{columns} LIMIT #{limit} OFFSET #{offset};
+        SQL
+      end
+
       def primary_key_sequence(shadow_table, primary_key, opened)
         query = <<~SQL
           SELECT pg_get_serial_sequence('#{shadow_table}', '#{primary_key}') as sequence_name
@@ -414,6 +513,16 @@ module PgOnlineSchemaChange
         <<~SQL
           SELECT setval((select pg_get_serial_sequence('#{shadow_table}', '#{primary_key}')), (SELECT max(#{primary_key}) FROM #{table}));
         SQL
+      end
+
+      def total_rows(client, table)
+        query = <<~SQL
+          SELECT COUNT(*) as count FROM #{table}
+        SQL
+
+        result = run(client.connection, query)
+
+        result.map { |row| row["count"] }&.first
       end
     end
   end
