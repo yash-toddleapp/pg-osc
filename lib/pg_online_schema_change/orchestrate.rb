@@ -160,7 +160,6 @@ module PgOnlineSchemaChange
         # any duplicates. We are ensuring there are no race conditions between
         # adding the trigger, till the copy ends, since they all happen in the
         # same serializable transaction.
-        # Query.run(client.connection, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true)
         logger.info("Setting up shadow table", { shadow_table: shadow_table })
 
         Query.run(
@@ -173,8 +172,6 @@ module PgOnlineSchemaChange
           client.connection,
           "SELECT fix_serial_sequence('#{client.table_name}', '#{shadow_table}');"
           )
-
-        # Query.run(client.connection, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true)
       end
 
       def disable_vacuum!
@@ -187,16 +184,6 @@ module PgOnlineSchemaChange
           "Disabling vacuum on shadow and audit table",
           { shadow_table: shadow_table, audit_table: audit_table },
         )
-        # sql = <<~SQL
-        #   ALTER TABLE #{shadow_table} SET (
-        #     autovacuum_enabled = false, toast.autovacuum_enabled = false
-        #   );
-
-        #   ALTER TABLE #{audit_table} SET (
-        #     autovacuum_enabled = false, toast.autovacuum_enabled = false
-        #   );
-        # SQL
-
         
         Query.run(client.connection, "ALTER TABLE #{audit_table} SET (autovacuum_enabled = false, toast.autovacuum_enabled = false);")
         Query.run(client.connection, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true)
@@ -216,43 +203,7 @@ module PgOnlineSchemaChange
         Store.set(:renamed_columns_list, Query.renamed_columns(client))
       end
 
-      # def copy_data!
-      #   # re-uses transaction with serializable
-      #   # Begin the process to copy data into copy table
-      #   # depending on the size of the table, this can be a time
-      #   # taking operation.
-      #   logger.info(
-      #     "Clearing contents of audit table before copy..",
-      #     { shadow_table: shadow_table, parent_table: client.table_name },
-      #   )
-      #   Query.run(client.connection, "DELETE FROM #{audit_table}", true)
-
-      #   logger.info(
-      #     "Copying contents..",
-      #     { shadow_table: shadow_table, parent_table: client.table_name },
-      #   )
-      #   if client.copy_statement
-      #     query = format(client.copy_statement, shadow_table: shadow_table)
-      #     return Query.run(client.connection, query, true)
-      #   end
-
-      #   total_rows = Query.total_rows(client, client.table_name)
-
-      #   logger.info("Total rows to copy: #{total_rows}")
-      #   offset = 0
-      #   batch_size = 100
-
-      #   while offset <= total_rows.to_i
-      #     logger.info("Copying rows from #{offset} to #{offset + batch_size}")
-      #     sql = Query.copy_data_statement_v3(client, shadow_table, true, batch_size, offset)
-      #     Query.run(client.connection, sql, true)
-      #     offset += batch_size
-      #   end
-      #   logger.info("Finished copying rows")
-      # ensure
-      #   Query.run(client.connection, "COMMIT;") # commit the serializable transaction
-      # end
-
+    
       def copy_data!
         # re-uses transaction with serializable
         # Begin the process to copy data into copy table
