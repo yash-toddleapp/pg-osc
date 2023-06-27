@@ -14,7 +14,7 @@ module PgOnlineSchemaChange
 
         sql = <<~SQL
           SET statement_timeout = 0;
-          SET client_min_messages = DEBUG5;
+          SET client_min_messages = warning;
           SET search_path TO #{client.schema};
         SQL
 
@@ -160,21 +160,21 @@ module PgOnlineSchemaChange
         # any duplicates. We are ensuring there are no race conditions between
         # adding the trigger, till the copy ends, since they all happen in the
         # same serializable transaction.
-        Query.run(client.connection, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true)
+        # Query.run(client.connection, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true)
         logger.info("Setting up shadow table", { shadow_table: shadow_table })
 
         Query.run(
           client.connection,
           "SELECT create_table_all('#{client.table_name}', '#{shadow_table}');",
-          true,
-        )
+          )
 
         # update serials
         Query.run(
           client.connection,
-          "SELECT fix_serial_sequence('#{client.table_name}', '#{shadow_table}');",
-          true,
-        )
+          "SELECT fix_serial_sequence('#{client.table_name}', '#{shadow_table}');"
+          )
+
+        # Query.run(client.connection, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true)
       end
 
       def disable_vacuum!
@@ -187,16 +187,20 @@ module PgOnlineSchemaChange
           "Disabling vacuum on shadow and audit table",
           { shadow_table: shadow_table, audit_table: audit_table },
         )
-        sql = <<~SQL
-          ALTER TABLE #{shadow_table} SET (
-            autovacuum_enabled = false, toast.autovacuum_enabled = false
-          );
+        # sql = <<~SQL
+        #   ALTER TABLE #{shadow_table} SET (
+        #     autovacuum_enabled = false, toast.autovacuum_enabled = false
+        #   );
 
-          ALTER TABLE #{audit_table} SET (
-            autovacuum_enabled = false, toast.autovacuum_enabled = false
-          );
-        SQL
-        Query.run(client.connection, sql, true)
+        #   ALTER TABLE #{audit_table} SET (
+        #     autovacuum_enabled = false, toast.autovacuum_enabled = false
+        #   );
+        # SQL
+
+        
+        Query.run(client.connection, "ALTER TABLE #{audit_table} SET (autovacuum_enabled = false, toast.autovacuum_enabled = false);")
+        Query.run(client.connection, "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE", true)
+        Query.run(client.connection, "ALTER TABLE #{shadow_table} SET (autovacuum_enabled = false, toast.autovacuum_enabled = false);", true)
       end
 
       def run_alter_statement!
