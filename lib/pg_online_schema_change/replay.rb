@@ -83,17 +83,20 @@ module PgOnlineSchemaChange
           when "UPDATE"
             set_values = new_row.map { |column, value| "#{column} = '#{value}'" }.join(",")
 
+            where_values = primary_key_columns.map { |column| "#{column} = '#{row[column]}'" }.join(" AND ")
+
             sql = <<~SQL
               UPDATE #{shadow_table}
               SET #{set_values}
-              WHERE #{primary_key}='#{row[primary_key]}';
+              WHERE #{where_values};
             SQL
             to_be_replayed << sql
 
             to_be_deleted_rows << "'#{row[audit_table_pk]}'"
           when "DELETE"
+            where_values = primary_key_columns.map { |column| "#{column} = '#{row[column]}'" }.join(" AND ")
             sql = <<~SQL
-              DELETE FROM #{shadow_table} WHERE #{primary_key}='#{row[primary_key]}';
+              DELETE FROM #{shadow_table} WHERE #{where_values};
             SQL
             to_be_replayed << sql
 

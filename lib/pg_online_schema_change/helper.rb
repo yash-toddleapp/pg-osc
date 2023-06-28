@@ -8,6 +8,12 @@ module PgOnlineSchemaChange
 
       Store.set(:primary_key, Query.primary_key_for(client, client.table_name))
     end
+    def primary_key_columns
+      result = Store.get(:primary_key_columns)
+      return result if result
+
+      Store.set(:primary_key_columns, Query.primary_key_for_v2(client, client.table_name))
+    end
 
     def logger
       PgOnlineSchemaChange.logger

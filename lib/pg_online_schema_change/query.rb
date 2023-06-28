@@ -288,6 +288,27 @@ module PgOnlineSchemaChange
         columns.first
       end
 
+      def primary_key_for_v2(client, table)
+        query = <<~SQL
+          SELECT
+            pg_attribute.attname as column_name
+          FROM pg_index, pg_class, pg_attribute, pg_namespace
+          WHERE
+            pg_class.oid = '#{table}'::regclass AND
+            indrelid = pg_class.oid AND
+            nspname = '#{client.schema}' AND
+            pg_class.relnamespace = pg_namespace.oid AND
+            pg_attribute.attrelid = pg_class.oid AND
+            pg_attribute.attnum = any(pg_index.indkey)
+          AND indisprimary
+        SQL
+
+        columns = []
+        run(client.connection, query) { |result| columns = result.map { |row| row["column_name"] } }
+        
+        columns
+      end
+
       def storage_parameters_for(client, table, reuse_trasaction = false)
         query = <<~SQL
           SELECT array_to_string(reloptions, ',') as params FROM pg_class WHERE relname='#{table}';
