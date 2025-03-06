@@ -8,14 +8,12 @@ RSpec.describe(PgOnlineSchemaChange::Replay) do
       before do
         allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
         setup_tables(client)
-        PgOnlineSchemaChange::Orchestrate.setup!(client_options)
-
         ingest_dummy_data_into_dummy_table(client)
+        PgOnlineSchemaChange::Orchestrate.setup!(client_options)
 
         PgOnlineSchemaChange::Orchestrate.setup_audit_table!
         PgOnlineSchemaChange::Orchestrate.setup_trigger!
         PgOnlineSchemaChange::Orchestrate.setup_shadow_table!
-        PgOnlineSchemaChange::Orchestrate.disable_vacuum!
         PgOnlineSchemaChange::Orchestrate.run_alter_statement!
         PgOnlineSchemaChange::Orchestrate.copy_data!
       end
@@ -223,14 +221,12 @@ RSpec.describe(PgOnlineSchemaChange::Replay) do
       before do
         allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
         setup_tables(client)
-        PgOnlineSchemaChange::Orchestrate.setup!(client_options)
-
         ingest_dummy_data_into_dummy_table(client)
+        PgOnlineSchemaChange::Orchestrate.setup!(client_options)
 
         PgOnlineSchemaChange::Orchestrate.setup_audit_table!
         PgOnlineSchemaChange::Orchestrate.setup_trigger!
         PgOnlineSchemaChange::Orchestrate.setup_shadow_table!
-        PgOnlineSchemaChange::Orchestrate.disable_vacuum!
         PgOnlineSchemaChange::Orchestrate.run_alter_statement!
         PgOnlineSchemaChange::Orchestrate.copy_data!
       end
@@ -401,7 +397,6 @@ RSpec.describe(PgOnlineSchemaChange::Replay) do
         PgOnlineSchemaChange::Orchestrate.setup_audit_table!
         PgOnlineSchemaChange::Orchestrate.setup_trigger!
         PgOnlineSchemaChange::Orchestrate.setup_shadow_table!
-        PgOnlineSchemaChange::Orchestrate.disable_vacuum!
         PgOnlineSchemaChange::Orchestrate.run_alter_statement!
         PgOnlineSchemaChange::Orchestrate.copy_data!
       end

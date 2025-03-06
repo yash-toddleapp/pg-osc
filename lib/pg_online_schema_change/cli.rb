@@ -42,10 +42,10 @@ module PgOnlineSchemaChange
     method_option :password,
                   aliases: "-w",
                   type: :string,
-                  required: true,
+                  required: false,
                   default: "",
                   desc:
-                    "Password for the Database"
+                    "DEPRECATED: Password for the Database. Please pass PGPASSWORD environment variable instead."
     method_option :verbose,
                   aliases: "-v",
                   type: :boolean,
@@ -89,22 +89,30 @@ module PgOnlineSchemaChange
                   default: DELTA_COUNT,
                   desc:
                     "Indicates how many rows should be remaining before a swap should be performed. This can be tuned for faster catch up and swap, especially on highly volume tables. Best used with pull-batch-count."
+    method_option :skip_foreign_key_validation,
+                  aliases: "-o",
+                  type: :boolean,
+                  required: false,
+                  default: false,
+                  desc:
+                    "Skip foreign key validation after swap. You shouldn't need this unless you have a very specific use case, like manually validating foreign key constraints after swap."
 
     def perform
       client_options = Struct.new(*options.keys.map(&:to_sym)).new(*options.values)
       PgOnlineSchemaChange.logger(verbose: client_options.verbose)
 
-      # if client_options.password
-      #   PgOnlineSchemaChange.logger.warn(
-      #     "DEPRECATED: -w is deprecated. Please pass PGPASSWORD environment variable instead.",
-      #   )
-      # end
+      if client_options.password
+        PgOnlineSchemaChange.logger.warn(
+          "DEPRECATED: -w is deprecated. Please pass PGPASSWORD environment variable instead.",
+        )
+      end
 
-      client_options.password = client_options.password || ENV["PGPASSWORD"]
+      client_options.password = ENV["PGPASSWORD"] || client_options.password
 
       PgOnlineSchemaChange::Orchestrate.run!(client_options)
     end
 
+    map ['--version', '-v'] => :version
     desc "--version, -v", "print the version"
 
     def version

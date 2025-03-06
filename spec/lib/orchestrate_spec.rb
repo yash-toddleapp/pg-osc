@@ -19,14 +19,15 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
 
       expect(client.connection).to receive(:async_exec)
         .with("BEGIN;")
-        .exactly(8)
+        .exactly(9)
         .times
         .and_call_original
+      expect(client.connection).to receive(:async_exec).with(/array_to_string/).and_call_original
       expect(client.connection).to receive(:async_exec).with(
         /convalidated AS constraint_validated/,
       ).and_call_original
       expect(client.connection).to receive(:async_exec).with(
-        "SET statement_timeout = 0;\nSET client_min_messages = warning;\nSET search_path TO #{client.schema};\n",
+        "SET statement_timeout = 0;\nSET client_min_messages = warning;\nSET search_path TO \"#{client.schema}\";\n",
       ).and_call_original
       expect(client.connection).to receive(:async_exec).with(
         FUNC_FIX_SERIAL_SEQUENCE,
@@ -37,7 +38,7 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
       expect(client.connection).to receive(:async_exec).with(query).and_call_original
       expect(client.connection).to receive(:async_exec)
         .with("COMMIT;")
-        .exactly(8)
+        .exactly(9)
         .times
         .and_call_original
       expect(client.connection).to receive(:async_exec).with(
@@ -83,8 +84,8 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
 
     before do
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
-      described_class.setup!(client_options)
       setup_tables(client)
+      described_class.setup!(client_options)
     end
 
     after do
@@ -163,6 +164,50 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
         ],
       )
     end
+
+    it "creates the shadow table with autovacuum disabled" do
+      described_class.setup_audit_table!
+
+      query = <<~SQL
+        select reloptions from pg_class where relname = '#{described_class.audit_table}';
+       SQL
+
+      expect_query_result(
+        connection: client.connection,
+        query: query,
+        assertions: [{ count: 1, data: [{ "reloptions" => "{autovacuum_enabled=false}" }] }],
+      )
+    end
+
+    describe "when table has a long name" do
+      let(:client) do
+        options =
+          client_options.to_h.merge(
+            alter_statement:
+              "ALTER TABLE this_is_a_table_with_a_very_long_name ADD COLUMN \"user_id\" int;",
+          )
+        client_options = Struct.new(*options.keys).new(*options.values)
+        PgOnlineSchemaChange::Client.new(client_options)
+      end
+
+      before do
+        allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
+        described_class.setup!(client_options)
+        setup_tables(client)
+      end
+
+      it "successfully" do
+        described_class.setup_audit_table!
+
+        sequence_name =
+          PgOnlineSchemaChange::Query.get_sequence_name(
+            client,
+            described_class.audit_table,
+            described_class.audit_table_pk,
+          )
+        expect(described_class.audit_table_pk_sequence).to eq(sequence_name)
+      end
+    end
   end
 
   describe ".setup_trigger!" do
@@ -238,7 +283,7 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
         select p.oid::regprocedure from pg_proc p
         join pg_namespace n
         on p.pronamespace = n.oid
-        where n.nspname = 'test_schema';
+        where n.nspname = 'test-schema';
       SQL
 
       expect_query_result(
@@ -445,47 +490,14 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
         assertions: [{ count: 1, data: [{ "count" => "0" }] }],
       )
     end
-  end
 
-  describe ".disable_vacuum!" do
-    let(:client) { PgOnlineSchemaChange::Client.new(client_options) }
-
-    before do
-      allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
-      setup_tables(client)
-      described_class.setup!(client_options)
-
-      described_class.setup_audit_table!
+    it "creates the shadow table with autovacuum disabled" do
       described_class.setup_shadow_table!
-    end
-
-    it "successfully" do
-      query = <<~SQL
-        ALTER TABLE #{described_class.shadow_table} SET (
-          autovacuum_enabled = false, toast.autovacuum_enabled = false
-        );
-
-        ALTER TABLE #{described_class.audit_table} SET (
-          autovacuum_enabled = false, toast.autovacuum_enabled = false
-        );
-      SQL
-      expect(client.connection).to receive(:async_exec).with("BEGIN;").and_call_original
-      expect(client.connection).to receive(:async_exec).with(
-        "SELECT array_to_string(reloptions, ',') as params FROM pg_class WHERE relname='books';\n",
-      ).and_call_original
-      expect(client.connection).to receive(:async_exec).with(query).and_call_original
-      expect(client.connection).to receive(:async_exec).with("COMMIT;").and_call_original
-
-      described_class.disable_vacuum!
-
-      expect(described_class.primary_table_storage_parameters).to eq(
-        "autovacuum_enabled=true,autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=20000",
-      )
-      RSpec::Mocks.space.reset_all
 
       query = <<~SQL
-        select reloptions from pg_class where relname = '#{described_class.audit_table}';
-      SQL
+        select reloptions from pg_class where relname = '#{described_class.shadow_table}';
+       SQL
+
       expect_query_result(
         connection: client.connection,
         query: query,
@@ -500,9 +512,8 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     before do
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
       setup_tables(client)
-      described_class.setup!(client_options)
-
       ingest_dummy_data_into_dummy_table(client)
+      described_class.setup!(client_options)
 
       described_class.setup_audit_table!
       described_class.setup_trigger!
@@ -975,14 +986,12 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     before do
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
       setup_tables(client)
-      described_class.setup!(client_options)
-
       ingest_dummy_data_into_dummy_table(client)
+      described_class.setup!(client_options)
 
       described_class.setup_audit_table!
       described_class.setup_trigger!
       described_class.setup_shadow_table!
-      described_class.disable_vacuum!
       described_class.run_alter_statement!
       described_class.copy_data!
 
@@ -1101,7 +1110,11 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     it "sucessfully resets the autovacuum" do
       described_class.swap!
 
-      expect(PgOnlineSchemaChange::Query.storage_parameters_for(client, client.table_name, true)).to eq("autovacuum_enabled=true,autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=20000")
+      expect(
+        PgOnlineSchemaChange::Query.storage_parameters_for(client, client.table_name, true),
+      ).to eq(
+        "autovacuum_enabled=true,autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=20000",
+      )
     end
 
     it "transfers the foreign keys from parent table" do
@@ -1156,21 +1169,19 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     before do
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
       setup_tables(client)
-      described_class.setup!(client_options)
-
       ingest_dummy_data_into_dummy_table(client)
+      described_class.setup!(client_options)
 
       described_class.setup_audit_table!
       described_class.setup_trigger!
       described_class.setup_shadow_table!
-      described_class.disable_vacuum!
       described_class.run_alter_statement!
       described_class.copy_data!
       PgOnlineSchemaChange::Replay.play!([])
       described_class.swap!
     end
 
-    it "sucessfully renames the tables" do
+    it "sucessfully runs analyze" do
       query = "SELECT last_analyze FROM pg_stat_all_tables WHERE relname = 'books';"
       rows = []
       PgOnlineSchemaChange::Query.run(client.connection, query) do |result|
@@ -1190,20 +1201,101 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     end
   end
 
+  describe ".run_vacuum!" do
+    let(:client) { PgOnlineSchemaChange::Client.new(client_options) }
+
+    before do
+      allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
+      setup_tables(client)
+      ingest_dummy_data_into_dummy_table(client)
+      described_class.setup!(client_options)
+
+      described_class.setup_audit_table!
+      described_class.setup_trigger!
+      described_class.setup_shadow_table!
+      described_class.run_alter_statement!
+      described_class.copy_data!
+      PgOnlineSchemaChange::Replay.play!([])
+      described_class.swap!
+    end
+
+    it "sucessfully runs vacuum" do
+      query = "SELECT last_vacuum FROM pg_stat_all_tables WHERE relname = 'books';"
+      rows = []
+      PgOnlineSchemaChange::Query.run(client.connection, query) do |result|
+        rows = result.map { |row| row }
+      end
+      expect(rows[0]["last_vacuum"]).to be_nil
+
+      described_class.run_vacuum!
+      sleep(1)
+
+      rows = []
+      PgOnlineSchemaChange::Query.run(client.connection, query) do |result|
+        rows = result.map { |row| row }
+      end
+
+      expect(rows[0]["last_vacuum"]).not_to be_nil
+    end
+  end
+
+  describe ".validate_constraints! with skip" do
+    let(:client) do
+      options = client_options.to_h.merge(skip_foreign_key_validation: true)
+      client_options = Struct.new(*options.keys).new(*options.values)
+      PgOnlineSchemaChange::Client.new(client_options)
+    end
+
+    before do
+      allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
+      setup_tables(client)
+      ingest_dummy_data_into_dummy_table(client)
+      described_class.setup!(client_options)
+
+      described_class.setup_audit_table!
+      described_class.setup_trigger!
+      described_class.setup_shadow_table!
+      described_class.run_alter_statement!
+      described_class.copy_data!
+      PgOnlineSchemaChange::Replay.play!([])
+      described_class.swap!
+    end
+
+    it "skips" do
+      result = [
+        {
+          "table_on" => "chapters",
+          "table_from" => "books",
+          "constraint_type" => "f",
+          "constraint_name" => "chapters_book_id_fkey",
+          "constraint_validated" => "f",
+          "definition" => "FOREIGN KEY (book_id) REFERENCES books(user_id) NOT VALID",
+        },
+      ]
+
+      # swap has happened w/ not valid
+      foreign_keys = PgOnlineSchemaChange::Query.get_foreign_keys_for(client, "chapters")
+      expect(foreign_keys).to eq(result)
+
+      described_class.validate_constraints!
+
+      foreign_keys = PgOnlineSchemaChange::Query.get_foreign_keys_for(client, "chapters")
+      expect(foreign_keys).to eq(result)
+    end
+  end
+
   describe ".validate_constraints!" do
     let(:client) { PgOnlineSchemaChange::Client.new(client_options) }
 
     before do
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
       setup_tables(client)
-      described_class.setup!(client_options)
-
       ingest_dummy_data_into_dummy_table(client)
+      described_class.setup!(client_options)
 
       described_class.setup_audit_table!
       described_class.setup_trigger!
       described_class.setup_shadow_table!
-      described_class.disable_vacuum!
       described_class.run_alter_statement!
       described_class.copy_data!
       PgOnlineSchemaChange::Replay.play!([])
@@ -1276,14 +1368,11 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     before do
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
       setup_tables(client)
-      described_class.setup!(client_options)
-
       ingest_dummy_data_into_dummy_table(client)
-
+      described_class.setup!(client_options)
       described_class.setup_audit_table!
       described_class.setup_trigger!
       described_class.setup_shadow_table!
-      described_class.disable_vacuum!
       described_class.run_alter_statement!
       described_class.copy_data!
       described_class.dropped_columns_list
@@ -1293,27 +1382,44 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     it "succesfully recreates the view" do
       expected_views_result = [
         {
-          "books_view" =>"SELECT books.user_id,\n    books.username,\n    books.seller_id,\n    books.password,\n    books.email,\n    books.\"createdOn\",\n    books.last_login\n   FROM books\n  WHERE (books.seller_id = 1);",
-        }
+          "\"temp_views\".books_temp_view" =>
+            "SELECT books.user_id,\n    books.username,\n    books.seller_id,\n    books.password,\n    books.email,\n    books.\"createdOn\",\n    books.last_login\n   FROM books\n  WHERE (books.seller_id = 1);",
+        },
+        {
+          "\"test-schema\".books_view" =>
+            "SELECT books.user_id,\n    books.username,\n    books.seller_id,\n    books.password,\n    books.email,\n    books.\"createdOn\",\n    books.last_login\n   FROM books\n  WHERE (books.seller_id = 1);",
+        },
       ]
       expected_views_result_op_table = [
         {
-          "books_view" =>"SELECT pgosc_op_table_books.user_id,\n    pgosc_op_table_books.username,\n    pgosc_op_table_books.seller_id,\n    pgosc_op_table_books.password,\n    pgosc_op_table_books.email,\n    pgosc_op_table_books.\"createdOn\",\n    pgosc_op_table_books.last_login\n   FROM pgosc_op_table_books\n  WHERE (pgosc_op_table_books.seller_id = 1);",
-        }
+          "\"temp_views\".books_temp_view" =>
+            "SELECT pgosc_op_table_books.user_id,\n    pgosc_op_table_books.username,\n    pgosc_op_table_books.seller_id,\n    pgosc_op_table_books.password,\n    pgosc_op_table_books.email,\n    pgosc_op_table_books.\"createdOn\",\n    pgosc_op_table_books.last_login\n   FROM pgosc_op_table_books\n  WHERE (pgosc_op_table_books.seller_id = 1);",
+        },
+        {
+          "\"test-schema\".books_view" =>
+            "SELECT pgosc_op_table_books.user_id,\n    pgosc_op_table_books.username,\n    pgosc_op_table_books.seller_id,\n    pgosc_op_table_books.password,\n    pgosc_op_table_books.email,\n    pgosc_op_table_books.\"createdOn\",\n    pgosc_op_table_books.last_login\n   FROM pgosc_op_table_books\n  WHERE (pgosc_op_table_books.seller_id = 1);",
+        },
       ]
 
       rows = []
-      PgOnlineSchemaChange::Query.run(client.connection, "select count(*) from  books_view;") do |result|
-        rows = result.map { |row| row }
-      end
+      PgOnlineSchemaChange::Query.run(
+        client.connection,
+        "select count(*) from  books_view;",
+      ) { |result| rows = result.map { |row| row } }
       expect(rows.first["count"]).to eq("3")
 
-      expect(PgOnlineSchemaChange::Query.view_definitions_for(client, described_class.old_primary_table)).to eq([])
-      expect(PgOnlineSchemaChange::Query.view_definitions_for(client, client.table)).to eq(expected_views_result)
+      expect(
+        PgOnlineSchemaChange::Query.view_definitions_for(client, described_class.old_primary_table),
+      ).to eq([])
+      expect(PgOnlineSchemaChange::Query.view_definitions_for(client, client.table)).to eq(
+        expected_views_result,
+      )
 
       described_class.swap!
 
-      expect(PgOnlineSchemaChange::Query.view_definitions_for(client, described_class.old_primary_table)).to eq(expected_views_result_op_table)
+      expect(
+        PgOnlineSchemaChange::Query.view_definitions_for(client, described_class.old_primary_table),
+      ).to eq(expected_views_result_op_table)
       expect(PgOnlineSchemaChange::Query.view_definitions_for(client, client.table)).to eq([])
 
       # Add an entry to check re-creation of view was successful with new data
@@ -1325,13 +1431,18 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
 
       described_class.replace_views!
 
-      expect(PgOnlineSchemaChange::Query.view_definitions_for(client, described_class.old_primary_table)).to eq([])
-      expect(PgOnlineSchemaChange::Query.view_definitions_for(client, client.table)).to eq(expected_views_result)
+      expect(
+        PgOnlineSchemaChange::Query.view_definitions_for(client, described_class.old_primary_table),
+      ).to eq([])
+      expect(PgOnlineSchemaChange::Query.view_definitions_for(client, client.table)).to eq(
+        expected_views_result,
+      )
 
       rows = []
-      PgOnlineSchemaChange::Query.run(client.connection, "select count(*) from books_view;") do |result|
-        rows = result.map { |row| row }
-      end
+      PgOnlineSchemaChange::Query.run(
+        client.connection,
+        "select count(*) from books_view;",
+      ) { |result| rows = result.map { |row| row } }
       expect(rows.first["count"]).to eq("4")
     end
   end
@@ -1342,14 +1453,12 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
     before do
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
       setup_tables(client)
-      described_class.setup!(client_options)
-
       ingest_dummy_data_into_dummy_table(client)
+      described_class.setup!(client_options)
 
       described_class.setup_audit_table!
       described_class.setup_trigger!
       described_class.setup_shadow_table!
-      described_class.disable_vacuum!
       described_class.run_alter_statement!
       described_class.copy_data!
       PgOnlineSchemaChange::Replay.play!([])
@@ -1410,6 +1519,36 @@ RSpec.describe(PgOnlineSchemaChange::Orchestrate) do
         end
 
         expect(rows[0]["exists"]).to be_nil
+      end
+    end
+
+    describe ".log_progress" do
+      let(:client) { PgOnlineSchemaChange::Client.new(client_options) }
+      let(:logger) { instance_double(Logger) }
+      let(:source_table_size) { 1000 }
+      let(:shadow_table_size) { 392 }
+
+      before do
+        allow(PgOnlineSchemaChange::Query).to receive(:get_table_size).and_return(
+          source_table_size,
+          shadow_table_size,
+        )
+        allow(PgOnlineSchemaChange::Orchestrate).to receive(:logger).and_return(logger)
+        allow(logger).to receive(:info)
+
+        stub_const("PgOnlineSchemaChange::Orchestrate::TRACK_PROGRESS_INTERVAL", 0.1)
+        described_class.instance_variable_set(:@copy_finished, false)
+      end
+
+      it "logs the estimated copy progress" do
+        expect(logger).to receive(:info).with(/Estimated copy progress: 39.2% complete/)
+
+        thread = described_class.log_progress
+
+        sleep(0.2)
+
+        described_class.instance_variable_set(:@copy_finished, true)
+        thread.join
       end
     end
   end

@@ -8,7 +8,7 @@ RSpec.describe(PgOnlineSchemaChange::Client) do
     expect(client.alter_statement).to eq(
       "ALTER TABLE books ADD COLUMN \"purchased\" BOOLEAN DEFAULT FALSE;",
     )
-    expect(client.schema).to eq("test_schema")
+    expect(client.schema).to eq("test-schema")
     expect(client.dbname).to eq("postgres")
     expect(client.username).to eq("jamesbond")
     expect(client.port).to eq(5432)
@@ -27,6 +27,15 @@ RSpec.describe(PgOnlineSchemaChange::Client) do
     expect { described_class.new(client_options) }.to raise_error(
       PgOnlineSchemaChange::Error,
       "Not a valid ALTER statement: CREATE DATABASE foo",
+    )
+  end
+
+  it "raises error if delta count is smaller than pull batch count" do
+    options = client_options.to_h.merge(delta_count: 100, pull_batch_count: 50)
+    client_options = Struct.new(*options.keys).new(*options.values)
+    expect { described_class.new(client_options) }.to raise_error(
+      PgOnlineSchemaChange::Error,
+      "Value for delta_count should be smaller than the value for pull_batch_count",
     )
   end
 

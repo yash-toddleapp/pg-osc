@@ -66,7 +66,7 @@ module PgOnlineSchemaChange
         end
       end
 
-      def run(connection, query, reuse_trasaction = false, &block)
+      def run(connection, query, reuse_trasaction = false, &block) # rubocop:disable Style/ArgumentsForwarding
         if [PG::PQTRANS_INERROR, PG::PQTRANS_UNKNOWN].include?(connection.transaction_status)
           connection.cancel
         end
@@ -75,13 +75,12 @@ module PgOnlineSchemaChange
 
         connection.async_exec("BEGIN;")
 
-        result = connection.async_exec(query, &block)
+        result = connection.async_exec(query, &block) # rubocop:disable Style/ArgumentsForwarding
       rescue Exception # rubocop:disable Lint/RescueException
         connection.cancel if connection.transaction_status != PG::PQTRANS_IDLE
         connection.block
         logger.info("Exception raised, rolling back query", { rollback: true, query: query })
         connection.async_exec("ROLLBACK;")
-        connection.async_exec("COMMIT;")
         raise
       else
         connection.async_exec("COMMIT;") unless reuse_trasaction
@@ -133,6 +132,17 @@ module PgOnlineSchemaChange
         run(client.connection, query) { |result| indexes = result.map { |row| row["indexdef"] } }
 
         indexes
+      end
+
+      # fetches the sequence name of a table and column combination
+      def get_sequence_name(client, table, column)
+        query = <<~SQL
+          SELECT pg_get_serial_sequence('#{table}', '#{column}');
+        SQL
+
+        run(client.connection, query) do |result|
+          result.map { |row| row["pg_get_serial_sequence"] }
+        end.first
       end
 
       def get_triggers_for(client, table)
@@ -227,11 +237,9 @@ module PgOnlineSchemaChange
         self_foreign_keys =
           constraints.select { |row| row["table_on"] == table && row["constraint_type"] == "f" }
 
-        [referential_foreign_keys, self_foreign_keys].flatten
-          .map do |row|
-            "ALTER TABLE #{row["table_on"]} VALIDATE CONSTRAINT #{row["constraint_name"]};"
-          end
-          .join
+        [referential_foreign_keys, self_foreign_keys].flatten.map do |row|
+          "ALTER TABLE #{row["table_on"]} VALIDATE CONSTRAINT #{row["constraint_name"]};"
+        end
       end
 
       def dropped_columns(client)
@@ -324,20 +332,25 @@ module PgOnlineSchemaChange
 
       def view_definitions_for(client, table)
         query = <<~SQL
-          SELECT DISTINCT dependent_view.relname as view_name, pg_get_viewdef(dependent_view.relname::regclass) as view_definition
-          FROM pg_depend
-          JOIN pg_rewrite ON pg_depend.objid = pg_rewrite.oid
-          JOIN pg_class as dependent_view ON pg_rewrite.ev_class = dependent_view.oid
-          JOIN pg_class as source_table ON pg_depend.refobjid = source_table.oid
-          JOIN pg_namespace source_ns ON source_ns.oid = source_table.relnamespace
-          WHERE
-          source_ns.nspname = '#{client.schema}'
-          AND source_table.relname = '#{table}'
+          SELECT DISTINCT
+            dependent_view.relname AS view_name,
+            pg_get_viewdef(dependent_view.oid) AS view_definition,
+            view_ns.nspname AS schema_name
+          FROM pg_class AS source_table
+          JOIN pg_depend ON pg_depend.refobjid = source_table.oid
+          JOIN pg_rewrite ON pg_rewrite.oid = pg_depend.objid
+          JOIN pg_class AS dependent_view ON dependent_view.oid = pg_rewrite.ev_class
+          JOIN pg_namespace AS view_ns ON dependent_view.relnamespace = view_ns.oid
+          AND dependent_view.relkind = 'v'
+          AND source_table.relname = '#{table}';
         SQL
 
         definitions = []
         run(client.connection, query) do |result|
-          definitions = result.map { |row| {row["view_name"] => row["view_definition"].strip} }
+          definitions =
+            result.map do |row|
+              { "\"#{row["schema_name"]}\".#{row["view_name"]}" => row["view_definition"].strip }
+            end
         end
 
         definitions
@@ -437,14 +450,13 @@ module PgOnlineSchemaChange
         SQL
       end
 
-      def total_rows(client, table)
-        query = <<~SQL
-          SELECT COUNT(*) as count FROM #{table}
-        SQL
-
-        result = run(client.connection, query)
-
-        result.map { |row| row["count"] }&.first
+      def get_table_size(connection, schema, table_name)
+        size_query = "SELECT pg_table_size('#{schema}.#{table_name}');"
+        result = run(connection, size_query).first
+        result["pg_table_size"].to_i
+      rescue StandardError => e
+        logger.error("Error getting table size: #{e.message}")
+        0
       end
     end
   end

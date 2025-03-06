@@ -176,7 +176,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
       expect(client.connection).to receive(:async_exec).with(
         /FROM   	pg_constraint/,
       ).and_call_original
-      expect(client.connection).to receive(:async_exec).with("COMMIT;").twice.and_call_original
+      expect(client.connection).to receive(:async_exec).with("COMMIT;").once.and_call_original
 
       allow(client.connection).to receive(:async_exec).with(alter_query).and_raise(
         PG::DependentObjectsStillExist,
@@ -321,6 +321,14 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
           "constraint_validated" => "t",
           "definition" => "FOREIGN KEY (book_id) REFERENCES books(user_id)",
         },
+        {
+          "table_on" => "this_is_a_table_with_a_very_long_name",
+          "table_from" => "-",
+          "constraint_type" => "p",
+          "constraint_name" => "this_is_a_table_with_a_very_long_name_pkey",
+          "constraint_validated" => "t",
+          "definition" => "PRIMARY KEY (id)",
+        },
       ]
 
       expect(described_class.get_all_constraints_for(client)).to eq(result)
@@ -449,9 +457,13 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
     before { setup_tables(client) }
 
     it "returns drop and add statements" do
-      result =
-        "ALTER TABLE book_audits VALIDATE CONSTRAINT book_audits_book_id_fkey;ALTER TABLE chapters VALIDATE CONSTRAINT chapters_book_id_fkey;ALTER TABLE books VALIDATE CONSTRAINT books_seller_id_fkey;"
-      expect(described_class.get_foreign_keys_to_validate(client, "books")).to eq(result)
+      expect(described_class.get_foreign_keys_to_validate(client, "books")).to eq(
+        [
+          "ALTER TABLE book_audits VALIDATE CONSTRAINT book_audits_book_id_fkey;",
+          "ALTER TABLE chapters VALIDATE CONSTRAINT chapters_book_id_fkey;",
+          "ALTER TABLE books VALIDATE CONSTRAINT books_seller_id_fkey;",
+        ],
+      )
     end
   end
 
@@ -526,9 +538,9 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
       result = described_class.get_indexes_for(client, "books")
       expect(result).to eq(
         [
-          "CREATE UNIQUE INDEX books_pkey ON #{client.schema}.books USING btree (user_id)",
-          "CREATE UNIQUE INDEX books_username_key ON #{client.schema}.books USING btree (username)",
-          "CREATE UNIQUE INDEX books_email_key ON #{client.schema}.books USING btree (email)",
+          "CREATE UNIQUE INDEX books_pkey ON \"#{client.schema}\".books USING btree (user_id)",
+          "CREATE UNIQUE INDEX books_username_key ON \"#{client.schema}\".books USING btree (username)",
+          "CREATE UNIQUE INDEX books_email_key ON \"#{client.schema}\".books USING btree (email)",
         ],
       )
     end
@@ -683,12 +695,21 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
       client = PgOnlineSchemaChange::Client.new(client_options)
       setup_tables(client)
       ingest_dummy_data_into_dummy_table(client)
+      described_class.run(client.connection, "reset search_path")
       result = described_class.view_definitions_for(client, "books")
-      expect(result).to eq([
-        {
-          "books_view" =>"SELECT books.user_id,\n    books.username,\n    books.seller_id,\n    books.password,\n    books.email,\n    books.\"createdOn\",\n    books.last_login\n   FROM books\n  WHERE (books.seller_id = 1);",
-        }
-      ])
+
+      expect(result).to eq(
+        [
+          {
+            "\"temp_views\".books_temp_view" =>
+              "SELECT books.user_id,\n    books.username,\n    books.seller_id,\n    books.password,\n    books.email,\n    books.\"createdOn\",\n    books.last_login\n   FROM \"test-schema\".books\n  WHERE (books.seller_id = 1);",
+          },
+          {
+            "\"test-schema\".books_view" =>
+              "SELECT books.user_id,\n    books.username,\n    books.seller_id,\n    books.password,\n    books.email,\n    books.\"createdOn\",\n    books.last_login\n   FROM \"test-schema\".books\n  WHERE (books.seller_id = 1);",
+          },
+        ],
+      )
     end
   end
 
@@ -818,13 +839,13 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
   end
 
   describe ".open_lock_exclusive with forked process and kills backend" do
-    it "cannot acquire lock at first, kills backend (forked process), sucesfully acquires lock and returns true" do
+    it "cannot acquire lock at first, kills backend (forked process), sucessfully acquires lock and returns true" do
       pid =
         fork do
           new_client = PgOnlineSchemaChange::Client.new(client_options)
           setup_tables(new_client)
           new_client.connection.async_exec(
-            "SET search_path to #{new_client.schema}; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
+            "SET search_path to \"#{new_client.schema}\"; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
           )
 
           sleep(50)
@@ -839,7 +860,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
       client_options = Struct.new(*options.keys).new(*options.values)
       client = PgOnlineSchemaChange::Client.new(client_options)
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
-      client.connection.async_exec("SET search_path to #{client.schema};")
+      client.connection.async_exec("SET search_path to \"#{client.schema}\";")
 
       sleep 0.5
 
@@ -858,7 +879,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
           new_client = PgOnlineSchemaChange::Client.new(client_options)
           setup_tables(new_client)
           new_client.connection.async_exec(
-            "SET search_path to #{new_client.schema}; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
+            "SET search_path to \"#{new_client.schema}\"; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
           )
 
           sleep(50)
@@ -870,7 +891,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
 
       client = PgOnlineSchemaChange::Client.new(client_options)
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
-      client.connection.async_exec("SET search_path to #{client.schema};")
+      client.connection.async_exec("SET search_path to \"#{client.schema}\";")
 
       sleep(0.5)
 
@@ -890,7 +911,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
           new_client = PgOnlineSchemaChange::Client.new(client_options)
           setup_tables(new_client)
           new_client.connection.async_exec(
-            "SET search_path to #{new_client.schema}; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
+            "SET search_path to \"#{new_client.schema}\"; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
           )
 
           sleep(10)
@@ -902,7 +923,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
 
       client = PgOnlineSchemaChange::Client.new(client_options)
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
-      client.connection.async_exec("SET search_path to #{client.schema};")
+      client.connection.async_exec("SET search_path to \"#{client.schema}\";")
 
       sleep 0.5
 
@@ -930,7 +951,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
       client = PgOnlineSchemaChange::Client.new(client_options)
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
 
-      client.connection.async_exec("SET search_path to #{client.schema};")
+      client.connection.async_exec("SET search_path to \"#{client.schema}\";")
       result = described_class.kill_backends(client, client.table).map { |n| n }
       expect(result.first).to be_nil
     end
@@ -943,7 +964,7 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
           new_client = PgOnlineSchemaChange::Client.new(client_options)
           setup_tables(new_client)
           new_client.connection.async_exec(
-            "SET search_path to #{new_client.schema}; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
+            "SET search_path to \"#{new_client.schema}\"; BEGIN; LOCK TABLE #{new_client.table_name} IN ACCESS EXCLUSIVE MODE;",
           )
 
           sleep(5)
@@ -959,13 +980,30 @@ RSpec.describe(PgOnlineSchemaChange::Query) do
       client = PgOnlineSchemaChange::Client.new(client_options)
       allow(PgOnlineSchemaChange::Client).to receive(:new).and_return(client)
 
-      client.connection.async_exec("SET search_path to #{client.schema};")
+      client.connection.async_exec("SET search_path to \"#{client.schema}\";")
 
       result = described_class.kill_backends(client, client.table).map { |n| n }
 
       expect(result.first).to eq({ "pg_terminate_backend" => "t" })
     ensure
       Process.kill("KILL", pid)
+    end
+  end
+
+  describe ".get_table_size" do
+    it "returns the table size in bytes" do
+      client = PgOnlineSchemaChange::Client.new(client_options)
+      setup_tables(client)
+      ingest_dummy_data_into_dummy_table(client)
+      result =
+        PgOnlineSchemaChange::Query.get_table_size(
+          client.checkout_connection,
+          client.schema,
+          "books",
+        )
+
+      expect(result).to be_a(Integer)
+      expect(result).to be >= 0
     end
   end
 end

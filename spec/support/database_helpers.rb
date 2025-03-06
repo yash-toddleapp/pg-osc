@@ -2,7 +2,7 @@
 
 module DatabaseHelpers
   def schema
-    ENV["POSTGRES_SCHEMA"] || "test_schema"
+    ENV["POSTGRES_SCHEMA"] || "test-schema"
   end
 
   def client_options
@@ -20,34 +20,35 @@ module DatabaseHelpers
       delta_count: 20,
       pull_batch_count: 1000,
       copy_statement: "",
+      skip_foreign_key_validation: false,
     }
     Struct.new(*options.keys).new(*options.values)
   end
 
   def new_dummy_table_sql
     <<~SQL
-      CREATE SCHEMA IF NOT EXISTS #{schema};
+      CREATE SCHEMA IF NOT EXISTS "#{schema}";
 
-      CREATE TABLE IF NOT EXISTS #{schema}.sellers (
+      CREATE TABLE IF NOT EXISTS "#{schema}".sellers (
         id serial PRIMARY KEY,
         name VARCHAR ( 50 ) UNIQUE NOT NULL,
         "createdOn" TIMESTAMP NOT NULL,
         last_login TIMESTAMP
       );
 
-      CREATE TABLE IF NOT EXISTS #{schema}.books (
+      CREATE TABLE IF NOT EXISTS "#{schema}".books (
         user_id serial PRIMARY KEY,
         username VARCHAR ( 50 ) UNIQUE NOT NULL,
-        seller_id SERIAL REFERENCES #{schema}.sellers NOT NULL,
+        seller_id SERIAL REFERENCES "#{schema}".sellers NOT NULL,
         password VARCHAR ( 50 ) NOT NULL,
         email VARCHAR ( 255 ) UNIQUE NOT NULL,
         "createdOn" TIMESTAMP NOT NULL,
         last_login TIMESTAMP
       ) WITH (autovacuum_enabled=true,autovacuum_vacuum_scale_factor=0,autovacuum_vacuum_threshold=20000);
 
-      CREATE TABLE IF NOT EXISTS #{schema}.book_audits (
+      CREATE TABLE IF NOT EXISTS "#{schema}".book_audits (
         id serial PRIMARY KEY,
-        book_id SERIAL REFERENCES #{schema}.books NOT NULL,
+        book_id SERIAL REFERENCES "#{schema}".books NOT NULL,
         changed_on TIMESTAMP(6) NOT NULL
       );
 
@@ -65,20 +66,25 @@ module DatabaseHelpers
       END;
       $$;
 
-      DROP TRIGGER IF EXISTS email_changes on #{schema}.books;
+      DROP TRIGGER IF EXISTS email_changes on "#{schema}".books;
       CREATE TRIGGER email_changes
       AFTER UPDATE
-      ON #{schema}.books
+      ON "#{schema}".books
       FOR EACH ROW
       EXECUTE PROCEDURE email_changes();
 
-      CREATE TABLE IF NOT EXISTS #{schema}.chapters (
+      CREATE TABLE IF NOT EXISTS "#{schema}".chapters (
         id serial PRIMARY KEY,
         name VARCHAR ( 50 ) UNIQUE NOT NULL,
-        book_id SERIAL REFERENCES #{schema}.books NOT NULL,
+        book_id SERIAL REFERENCES "#{schema}".books NOT NULL,
         book_name VARCHAR ( 50 ),
         "createdOn" TIMESTAMP NOT NULL,
         last_login TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS "#{schema}".this_is_a_table_with_a_very_long_name (
+        id serial PRIMARY KEY,
+        "createdOn" TIMESTAMP NOT NULL
       );
 
       ALTER ROLE jamesbond SET statement_timeout = '60s';
@@ -89,7 +95,7 @@ module DatabaseHelpers
   def setup_tables(client = nil)
     cleanup_dummy_tables(client)
     create_dummy_tables(client)
-    PgOnlineSchemaChange::Query.run(client.connection, "SET search_path TO #{client.schema};")
+    PgOnlineSchemaChange::Query.run(client.connection, "SET search_path TO \"#{client.schema}\";")
   end
 
   def create_dummy_tables(client = nil)
@@ -111,15 +117,39 @@ module DatabaseHelpers
 
       CREATE OR REPLACE VIEW Books_view AS
         SELECT *
-        FROM books
+        FROM "#{schema}"."books"
         WHERE seller_id = 1;
     SQL
     PgOnlineSchemaChange::Query.run(client.connection, query)
+    create_view_in_another_schema
+    PgOnlineSchemaChange::Query.run(client.connection, "set search_path to \"#{schema}\";")
+  end
+
+  def create_view_in_another_schema(client = nil)
+    options = client_options.to_h.merge(schema: "temp_views")
+    new_client = PgOnlineSchemaChange::Client.new(Struct.new(*options.keys).new(*options.values))
+    PgOnlineSchemaChange::Query.run(
+      new_client.connection,
+      "CREATE SCHEMA IF NOT EXISTS temp_views;",
+    )
+
+    query = <<~SQL
+      SET search_path to temp_views;
+      CREATE OR REPLACE VIEW Books_temp_view AS
+        SELECT *
+        FROM "#{schema}".books
+        WHERE seller_id = 1;
+    SQL
+
+    PgOnlineSchemaChange::Query.run(new_client.connection, query)
   end
 
   def cleanup_dummy_tables(client = nil)
     client ||= PgOnlineSchemaChange::Client.new(client_options)
-    PgOnlineSchemaChange::Query.run(client.connection, "DROP SCHEMA IF EXISTS #{schema} CASCADE;")
+    PgOnlineSchemaChange::Query.run(
+      client.connection,
+      "DROP SCHEMA IF EXISTS \"#{schema}\" CASCADE; DROP SCHEMA IF EXISTS temp_views CASCADE;",
+    )
   end
 
   def expect_query_result(connection:, query:, assertions:)

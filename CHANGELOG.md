@@ -1,3 +1,55 @@
+## [0.9.10] - 2024-10-13
+
+- Pin protobuf (https://github.com/shayonj/pg-osc/commit/0a439a873f9df1bf474cfe13060a115278b94658)
+
+## [0.9.9] - 2024-10-13
+
+- Validate delta_count value against pull_batch_count by @tanelsuurhans in https://github.com/shayonj/pg-osc/pull/164
+- Always quote schema names to support uncommon characters like hyphens by @radhikalism in https://github.com/shayonj/pg-osc/pull/166
+- Bump thor from 1.3.0 to 1.3.2 by @dependabot in https://github.com/shayonj/pg-osc/pull/168
+- Bump rspec from 3.12.0 to 3.13.0 by @dependabot in https://github.com/shayonj/pg-osc/pull/150
+- Bump google-protobuf from 3.25.2 to 3.25.5 by @dependabot in https://github.com/shayonj/pg-osc/pull/171
+- Bump rexml from 3.2.6 to 3.3.6 by @dependabot in https://github.com/shayonj/pg-osc/pull/170
+- Bump pg from 1.5.4 to 1.5.8 by @dependabot in https://github.com/shayonj/pg-osc/pull/172
+
+## [0.9.8] - 2024-01-15
+
+- Dependency updates
+
+## [0.9.7] - 2024-01-15
+
+- Introduce the ability to show estimated progress of copy - #146
+
+## [0.9.6] - 2023-11-04
+
+- Fix and add links to caveats section in #130
+- Refresh views across all schemas post swap in #134
+
+## [0.9.5] - 2023-10-15
+
+- Validate one constraint at a time in #124
+- Introduce --skip-foreign-key-validation in #125
+
+## [0.9.4] - 2023-09-17
+
+- Resolving gem push and sync glitch in 0.9.3
+
+## [0.9.3] - 2023-09-17
+
+- Dependency updates
+- Adding support for showing the gem version with -v or --version by @brycethornton #101
+- Fix for INSERT's failing for long table names by @ahilmer #116
+- Get view definition of a view from dedicated schema by @shayonj #117
+
+## [0.9.2] - 2023-07-03
+
+- Dependency updates
+- Create shadow and audit with auatovacuum default turned off. Should avoid lock queues when disabling vacuum on audit table. #97
+
+## [0.9.1] - 2023-06-24
+
+- Dependency updates and refresh docker release process with multi-platform build
+
 ## [0.9.0] - 2023-05-22
 
 - Fix typo in README.md https://github.com/shayonj/pg-osc/pull/87

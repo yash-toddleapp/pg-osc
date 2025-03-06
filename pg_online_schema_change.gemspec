@@ -13,7 +13,7 @@ Gem::Specification.new do |spec|
   spec.summary = spec.description
   spec.homepage = "https://github.com/shayonj/pg-osc"
   spec.license = "MIT"
-  spec.required_ruby_version = ">= 2.7.0"
+  spec.required_ruby_version = ">= 3.0.0"
 
   spec.metadata["homepage_uri"] = spec.homepage
   spec.metadata["source_code_uri"] = spec.homepage
@@ -36,10 +36,11 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   spec.metadata = { "rubygems_mfa_required" => "true" }
 
+  spec.add_runtime_dependency("google-protobuf", "3.25.5")
   spec.add_runtime_dependency("ougai", "~> 2.0.0")
   spec.add_runtime_dependency("pg", ">= 1.3.2", "< 1.6.0")
   spec.add_runtime_dependency("pg_query", ">= 2.1.3", "< 4.3.0")
-  spec.add_runtime_dependency("thor", "~> 1.2.1")
+  spec.add_runtime_dependency("thor", ">= 1.2.1", "< 1.4.0")
 
   spec.add_development_dependency("prettier_print")
   spec.add_development_dependency("pry")

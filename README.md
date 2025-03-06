@@ -9,12 +9,11 @@ pg-online-schema-change (`pg-osc`) is a tool for making schema changes (any `ALT
 
 `pg-osc` uses the concept of shadow table to perform schema changes. At a high level, it creates a shadow table that looks structurally the same as the primary table, performs the schema change on the shadow table, copies contents from the primary table to the shadow table and swaps the table names in the end while preserving all changes to the primary table using triggers (via audit table).
 
-`pg-osc` is inspired by the design and workings of tools like `pg_repack` and `pt-online-schema-change` (MySQL). Read more below on [how does it work](#how-does-it-work), [prominent features](#prominent-features), the [caveats](#caveats) and [examples](#examples)
-
-⚠️ Proceed with caution when using this on production like workloads. Best to try on similar setup or staging like environment first. Read on below for some examples and caveats.
+`pg-osc` is inspired by the design and workings of tools like `pg_repack` and `pt-online-schema-change` (MySQL). Read more below on [how does it work](#how-does-it-work), [prominent features](#prominent-features), the [caveats](#few-things-to-keep-in-mind) and [examples](#examples)
 
 ## Table of Contents
 
+- [Table of Contents](#table-of-contents)
 - [Installation](#installation)
 - [Requirements](#requirements)
 - [Usage](#usage)
@@ -24,15 +23,15 @@ pg-online-schema-change (`pg-osc`) is a tool for making schema changes (any `ALT
   - [Renaming a column](#renaming-a-column)
   - [Multiple ALTER statements](#multiple-alter-statements)
   - [Kill other backends after 5s](#kill-other-backends-after-5s)
+  - [Replaying larger workloads](#replaying-larger-workloads)
   - [Backfill data](#backfill-data)
   - [Running using Docker](#running-using-docker)
-- [Caveats](#caveats)
+- [Few things to keep in mind](#few-things-to-keep-in-mind)
 - [How does it work](#how-does-it-work)
 - [Development](#development)
+  - [Local testing](#local-testing)
 - [Releasing](#releasing)
 - [Contributing](#contributing)
-- [License](#license)
-- [Code of Conduct](#code-of-conduct)
 
 ## Installation
 
@@ -61,7 +60,6 @@ https://hub.docker.com/r/shayonj/pg-osc
 ## Requirements
 
 - PostgreSQL 9.6 and later
-- Ruby 2.6 and later
 - Database user should have permissions for `TRIGGER` and/or a `SUPERUSER`
 
 ## Usage
@@ -70,28 +68,29 @@ https://hub.docker.com/r/shayonj/pg-osc
 pg-online-schema-change help perform
 
 Usage:
-  pg-online-schema-change perform -a, --alter-statement=ALTER_STATEMENT -d, --dbname=DBNAME -h, --host=HOST -p, --port=N -s, --schema=SCHEMA -u, --username=USERNAME -w, --password=PASSWORD
+  pg-online-schema-change perform -a, --alter-statement=ALTER_STATEMENT -d, --dbname=DBNAME -h, --host=HOST -p, --port=N -s, --schema=SCHEMA -u, --username=USERNAME
 
 Options:
-  -a, --alter-statement=ALTER_STATEMENT        # The ALTER statement to perform the schema change
-  -s, --schema=SCHEMA                          # The schema in which the table is
-                                               # Default: public
-  -d, --dbname=DBNAME                          # Name of the database
-  -h, --host=HOST                              # Server host where the Database is located
-  -u, --username=USERNAME                      # Username for the Database
-  -p, --port=N                                 # Port for the Database
-                                               # Default: 5432
-  -w, --password=PASSWORD                      # DEPRECATED: Password for the Database. Please pass PGPASSWORD environment variable instead.
-  -v, [--verbose], [--no-verbose]              # Emit logs in debug mode
-  -f, [--drop], [--no-drop]                    # Drop the original table in the end after the swap
-  -k, [--kill-backends], [--no-kill-backends]  # Kill other competing queries/backends when trying to acquire lock for the shadow table creation and swap. It will wait for --wait-time-for-lock duration before killing backends and try upto 3 times.
-  -w, [--wait-time-for-lock=N]                 # Time to wait before killing backends to acquire lock and/or retrying upto 3 times. It will kill backends if --kill-backends is true, otherwise try upto 3 times and exit if it cannot acquire a lock.
-                                               # Default: 10
-  -c, [--copy-statement=COPY_STATEMENT]        # Takes a .sql file location where you can provide a custom query to be played (ex: backfills) when pgosc copies data from the primary to the shadow table. More examples in README.
-  -b, [--pull-batch-count=N]                   # Number of rows to be replayed on each iteration after copy. This can be tuned for faster catch up and swap. Best used with delta-count.
-                                               # Default: 1000
-  -e, [--delta-count=N]                        # Indicates how many rows should be remaining before a swap should be performed. This can be tuned for faster catch up and swap, especially on highly volume tables. Best used with pull-batch-count.
-                                               # Default: 20
+  -a, --alter-statement=ALTER_STATEMENT                                    # The ALTER statement to perform the schema change
+  -s, --schema=SCHEMA                                                      # The schema in which the table is
+                                                                           # Default: public
+  -d, --dbname=DBNAME                                                      # Name of the database
+  -h, --host=HOST                                                          # Server host where the Database is located
+  -u, --username=USERNAME                                                  # Username for the Database
+  -p, --port=N                                                             # Port for the Database
+                                                                           # Default: 5432
+  -w, [--password=PASSWORD]                                                # DEPRECATED: Password for the Database. Please pass PGPASSWORD environment variable instead.
+  -v, [--verbose], [--no-verbose]                                          # Emit logs in debug mode
+  -f, [--drop], [--no-drop]                                                # Drop the original table in the end after the swap
+  -k, [--kill-backends], [--no-kill-backends]                              # Kill other competing queries/backends when trying to acquire lock for the shadow table creation and swap. It will wait for --wait-time-for-lock duration before killing backends and try upto 3 times.
+  -w, [--wait-time-for-lock=N]                                             # Time to wait before killing backends to acquire lock and/or retrying upto 3 times. It will kill backends if --kill-backends is true, otherwise try upto 3 times and exit if it cannot acquire a lock.
+                                                                           # Default: 10
+  -c, [--copy-statement=COPY_STATEMENT]                                    # Takes a .sql file location where you can provide a custom query to be played (ex: backfills) when pgosc copies data from the primary to the shadow table. More examples in README.
+  -b, [--pull-batch-count=N]                                               # Number of rows to be replayed on each iteration after copy. This can be tuned for faster catch up and swap. Best used with delta-count.
+                                                                           # Default: 1000
+  -e, [--delta-count=N]                                                    # Indicates how many rows should be remaining before a swap should be performed. This can be tuned for faster catch up and swap, especially on highly volume tables. Best used with pull-batch-count.
+                                                                           # Default: 20
+  -o, [--skip-foreign-key-validation], [--no-skip-foreign-key-validation]  # Skip foreign key validation after swap. You shouldn't need this unless you have a very specific use case, like manually validating foreign key constraints after swap.
 ```
 
 ```
@@ -104,12 +103,12 @@ print the version
 ## Prominent features
 
 - `pg-osc` supports when a column is being added, dropped or renamed with no data loss.
-- `pg-osc` acquires minimal locks throughout the process (read more below on the caveats).
+- `pg-osc` acquires minimal locks throughout the process (read more below on the [caveats](#few-things-to-keep-in-mind)).
 - Copies over indexes and Foreign keys.
 - Optionally drop or retain old tables in the end.
+- Reduce bloat (since pg-osc creates a new table and drops the old one post swap).
 - Tune how slow or fast should replays be from the audit/log table ([Replaying larger workloads](#replaying-larger-workloads)).
 - Backfill old/new columns as data is copied from primary table to shadow table, and then perform the swap. [Example](#backfill-data)
-- **TBD**: Ability to reverse the change with no data loss. [tracking issue](https://github.com/shayonj/pg-osc/issues/14)
 
 ## Load test
 
@@ -217,7 +216,7 @@ docker run --network host -it --rm shayonj/pg-osc:latest \
     --drop
 ```
 
-## Caveats
+## Few things to keep in mind
 
 - Partitioned tables are not supported as of yet. Pull requests and ideas welcome.
 - A primary key should exist on the table; without it, `pg-osc` will raise an exception
@@ -229,8 +228,6 @@ docker run --network host -it --rm shayonj/pg-osc:latest \
 - By design, `pg-osc` doesn't kill any other DDLs being performed. It's best to not run any DDLs against the parent table during the operation.
 - Due to the nature of duplicating a table, there needs to be enough space on the disk to support the operation.
 - Index, constraints and sequence names will be altered and lose their original naming.
-  - Can be fixed in future releases. Feel free to open a feature req.
-- Triggers are not carried over.
   - Can be fixed in future releases. Feel free to open a feature req.
 - Foreign keys are dropped & re-added to referencing tables with a `NOT VALID`. A follow on `VALIDATE CONSTRAINT` is run.
   - Ensures that integrity is maintained and re-introducing FKs doesn't acquire additional locks, hence the `NOT VALID`.
@@ -259,14 +256,14 @@ docker run --network host -it --rm shayonj/pg-osc:latest \
 
 ## Development
 
-- Install ruby 3.1.3
+- Install ruby 3.3.0
 
 ```
 \curl -sSL https://get.rvm.io | bash
 
-rvm install 3.1.3
+rvm install 3.3.0
 
-rvm use 3.1.3
+rvm use 3.3.0
 ```
 
 - Spin up postgres via Docker Compose - `docker compose up`
@@ -289,6 +286,7 @@ bundle exec bin/pg-online-schema-change perform -a 'ALTER TABLE pgbench_accounts
 ## Releasing
 
 - Bump version in `version.rb`
+- bundle install
 - Commit
 - `./scripts/release.sh 0.2.0`
 - Update `CHANGELOG.md`
@@ -297,11 +295,3 @@ bundle exec bin/pg-online-schema-change perform -a 'ALTER TABLE pgbench_accounts
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at https://github.com/shayonj/pg-osc.
-
-## License
-
-The gem is available as open source under the terms of the [MIT License](https://opensource.org/licenses/MIT).
-
-## Code of Conduct
-
-Everyone interacting in the PgOnlineSchemaChange project's codebases, issue trackers, chat rooms and mailing lists is expected to follow the [code of conduct](https://github.com/shayonj/pg-osc/blob/main/CODE_OF_CONDUCT.md).
